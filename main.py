@@ -3,8 +3,9 @@ import os
 import sys
 import subprocess
 from pathlib import Path
+from datetime import datetime
 
-from PySide6.QtCore import Qt, QSize, QTimer, QPoint
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QAction
 from PySide6.QtWidgets import (
     QApplication, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "LiteDock"
+APP_VERSION = "1.1"
 APP_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 
@@ -28,6 +30,7 @@ def default_config():
         "opacity": 88,
         "position": "bottom",
         "show_clock": True,
+        "show_battery": True,
     }
 
 
@@ -133,9 +136,14 @@ class SettingsDialog(QDialog):
         self.clock.setCheckable(True)
         self.clock.setChecked(bool(config.get("show_clock", True)))
         self.clock.clicked.connect(lambda checked: self.clock.setText("显示" if checked else "隐藏"))
+        self.battery = QPushButton("显示" if config.get("show_battery", True) else "隐藏")
+        self.battery.setCheckable(True)
+        self.battery.setChecked(bool(config.get("show_battery", True)))
+        self.battery.clicked.connect(lambda checked: self.battery.setText("显示" if checked else "隐藏"))
         layout.addRow("图标大小：", self.icon_size)
         layout.addRow("背景不透明度：", self.opacity)
         layout.addRow("时钟：", self.clock)
+        layout.addRow("电池信息：", self.battery)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -145,6 +153,7 @@ class SettingsDialog(QDialog):
         self.config["icon_size"] = self.icon_size.value()
         self.config["opacity"] = self.opacity.value()
         self.config["show_clock"] = self.clock.isChecked()
+        self.config["show_battery"] = self.battery.isChecked()
 
 
 class DockWindow(QWidget):
@@ -153,7 +162,7 @@ class DockWindow(QWidget):
         self.config = load_config()
         self.buttons = []
         self.drag_start = None
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
@@ -166,6 +175,8 @@ class DockWindow(QWidget):
         self.root.setContentsMargins(8, 8, 8, 8)
         self.panel = QFrame()
         self.panel.setObjectName("panel")
+        self.panel.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.panel.customContextMenuRequested.connect(self.show_dock_context_menu)
         self.row = QHBoxLayout(self.panel)
         self.row.setContentsMargins(12, 9, 12, 9)
         self.row.setSpacing(8)
@@ -175,9 +186,14 @@ class DockWindow(QWidget):
         self.rebuild()
         self.tray = self.make_tray()
         self.position_window()
+
         self.clock_timer = QTimer(self)
         self.clock_timer.timeout.connect(self.update_clock)
-        self.clock_timer.start(1000)
+        self.clock_timer.start(250)
+        self.battery_timer = QTimer(self)
+        self.battery_timer.timeout.connect(self.update_battery)
+        self.battery_timer.start(30000)
+        QTimer.singleShot(500, self.update_battery)
 
     def style_for_opacity(self):
         alpha = round(int(self.config.get("opacity", 88)) * 2.55)
@@ -209,14 +225,14 @@ class DockWindow(QWidget):
         show_action.triggered.connect(self.show)
         settings_action = QAction("设置", self)
         settings_action.triggered.connect(self.open_settings)
-        quit_action = QAction("退出 LiteDock", self)
-        quit_action.triggered.connect(QApplication.quit)
+        close_action = QAction("关闭 LiteDock", self)
+        close_action.triggered.connect(QApplication.quit)
         menu.addAction(show_action)
         menu.addAction(settings_action)
         menu.addSeparator()
-        menu.addAction(quit_action)
+        menu.addAction(close_action)
         tray.setContextMenu(menu)
-        tray.setToolTip("LiteDock")
+        tray.setToolTip(f"LiteDock {APP_VERSION}")
         tray.show()
         return tray
 
@@ -256,9 +272,19 @@ class DockWindow(QWidget):
         settings_btn.clicked.connect(self.open_settings)
         self.row.addWidget(settings_btn)
 
+        self.clock_label = None
+        self.battery_label = None
+        if self.config.get("show_battery", True):
+            self.battery_label = QLabel("电池信息读取中…")
+            self.battery_label.setMinimumWidth(115)
+            self.battery_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.battery_label.setStyleSheet("font-size: 11px;")
+            self.battery_label.setToolTip("Windows 电池状态与充放电功率（设备支持时显示）")
+            self.row.addWidget(self.battery_label)
+
         if self.config.get("show_clock", True):
             self.clock_label = QLabel()
-            self.clock_label.setMinimumWidth(82)
+            self.clock_label.setMinimumWidth(88)
             self.clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.clock_label.setStyleSheet("font-size: 12px;")
             self.row.addWidget(self.clock_label)
@@ -266,6 +292,7 @@ class DockWindow(QWidget):
         self.setStyleSheet(self.style_for_opacity())
         self.adjustSize()
         self.position_window()
+        self.update_battery()
 
     def icon_for_item(self, item):
         path = item.get("path", "")
@@ -278,9 +305,60 @@ class DockWindow(QWidget):
         return self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
 
     def update_clock(self):
-        if hasattr(self, "clock_label") and self.clock_label:
-            from datetime import datetime
-            self.clock_label.setText(datetime.now().strftime("%H:%M\n%m/%d"))
+        if self.clock_label is not None:
+            self.clock_label.setText(datetime.now().strftime("%H:%M:%S\n%Y/%m/%d"))
+
+    def update_battery(self):
+        if self.battery_label is None:
+            return
+        # Prefer Windows WMI values for battery charge and charge/discharge rate.
+        # Some laptops/drivers do not expose EstimatedChargeRate; in that case show a clear fallback.
+        ps_script = (
+            "$b=Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1 "
+            "EstimatedChargeRemaining,BatteryStatus,EstimatedChargeRate; "
+            "if($null -eq $b){'NO_BATTERY'}else{"
+            "$b | ConvertTo-Json -Compress}"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                capture_output=True, text=True, timeout=4,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+            raw = result.stdout.strip()
+            if not raw or raw == "NO_BATTERY":
+                self.battery_label.setText("电池：不可用")
+                self.battery_label.setToolTip("此电脑未检测到可读取的电池信息")
+                return
+            data = json.loads(raw)
+            percent = data.get("EstimatedChargeRemaining")
+            status = int(data.get("BatteryStatus") or 0)
+            rate = data.get("EstimatedChargeRate")
+            status_text = {
+                1: "放电中", 2: "接通电源", 3: "已充满", 4: "电量低",
+                5: "电量严重不足", 6: "充电中", 7: "充电中", 8: "充电中",
+                9: "充电中", 10: "状态未知", 11: "部分充电"
+            }.get(status, "状态未知")
+            direction = "输入" if status in (2, 6, 7, 8, 9, 11) else "输出"
+            if rate is None or str(rate).strip() == "":
+                power_text = "功率：不可读取"
+            else:
+                watts = abs(float(rate)) / 1000.0
+                power_text = f"{direction} {watts:.1f} W"
+            percent_text = f"{int(percent)}%" if percent is not None else "--%"
+            self.battery_label.setText(f"电池 {percent_text}\n{power_text}")
+            self.battery_label.setToolTip(
+                f"电池电量：{percent_text}\n状态：{status_text}\n"
+                f"充放电功率：{power_text}\n"
+                "功率读数取决于 Windows 电池驱动是否提供数据。"
+            )
+        except subprocess.TimeoutExpired:
+            self.battery_label.setText("电池：读取超时")
+        except Exception:
+            self.battery_label.setText("电池：不可读取")
+            self.battery_label.setToolTip(
+                "无法读取电池信息。桌面电脑可能没有电池，或设备驱动未提供 WMI 数据。"
+            )
 
     def position_window(self):
         screen = QApplication.primaryScreen()
@@ -335,6 +413,26 @@ class DockWindow(QWidget):
                     item["kind"] = "custom"
                     save_config(self.config)
                     self.rebuild()
+
+    def show_dock_context_menu(self, pos):
+        menu = QMenu(self)
+        settings_action = menu.addAction("设置")
+        close_action = menu.addAction("关闭 LiteDock")
+        chosen = menu.exec(self.panel.mapToGlobal(pos))
+        if chosen == settings_action:
+            self.open_settings()
+        elif chosen == close_action:
+            QApplication.quit()
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        settings_action = menu.addAction("设置")
+        close_action = menu.addAction("关闭 LiteDock")
+        chosen = menu.exec(event.globalPos())
+        if chosen == settings_action:
+            self.open_settings()
+        elif chosen == close_action:
+            QApplication.quit()
 
     def add_app(self):
         dialog = AddAppDialog(self)
@@ -394,8 +492,6 @@ class DockWindow(QWidget):
 
 
 def main():
-    if sys.platform != "win32":
-        print("LiteDock 当前版本面向 Windows 10/11。")
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setQuitOnLastWindowClosed(False)

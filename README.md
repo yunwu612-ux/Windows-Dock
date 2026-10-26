@@ -1,38 +1,42 @@
-# LiteDock
+# LiteDock V1.1
 
-一个面向 Windows 10 的轻量级桌面 Dock 原型，使用 Python + PySide6 构建。它借鉴了常见桌面 Dock 的交互方式，不是 MyDockFinder 的复制品。
+Windows 10 轻量级桌面 Dock 原型，使用 Python + PySide6 构建。
 
-## 当前功能
+## V1.1 更新
+
+- 时钟显示秒数，格式为 `HH:MM:SS`，并显示日期。
+- 增加电池电量和充/放电功率显示。Windows 通过 `Win32_Battery` 查询；若驱动不提供功率值，会显示“功率：不可读取”。台式机没有电池时会显示不可用。
+- Dock 空白处右键菜单新增“关闭 LiteDock”与“设置”。
+- 系统托盘菜单也有“关闭 LiteDock”。
+- 设置里可开关电池信息显示。
+- 仍默认不开机启动。
+
+## 功能
 
 - 无边框、置顶、半透明圆角 Dock
-- 应用图标按钮，点击启动应用
-- 添加应用、右键编辑/移除
-- 拖放文件到 Dock 添加快捷入口
-- 图标大小、背景不透明度、时钟显示设置
+- 点击启动应用，右键编辑/移除
+- 添加应用、拖放文件添加快捷入口
+- 图标大小、背景不透明度、时钟和电池显示设置
 - 系统托盘菜单
-- 配置保存在 `%APPDATA%\\LiteDock\\config.json`
-- 默认不开机启动
+- 配置保存到 `%APPDATA%\\LiteDock\\config.json`
 
 ## 环境要求
 
 - Windows 10 64 位
 - Python 3.10–3.12（推荐 3.11）
-- 网络连接，用于安装依赖
 
 ## 运行源码
 
 ```powershell
 py -m venv .venv
-.venv\\Scripts\\activate
+.venv\Scripts\activate
 py -m pip install -r requirements.txt
 py main.py
 ```
 
-如果 `py` 命令不可用，请安装 Python，并在安装时勾选 **Add Python to PATH**。
+## 本地构建 EXE
 
-## 构建 EXE
-
-双击 `build.bat`，或在 PowerShell 中执行：
+双击 `build.bat`，或运行：
 
 ```powershell
 py -m pip install -r requirements.txt pyinstaller
@@ -41,26 +45,14 @@ py -m PyInstaller --noconfirm --clean --windowed --onefile --name LiteDock main.
 
 生成文件：`dist\\LiteDock.exe`
 
-首次启动可能被 Windows 安全提示检查；请只运行自己构建或可信来源的文件。打包后的单文件程序启动可能比目录版慢一点。若更重视启动速度，可把 `--onefile` 改为 `--onedir`。
+## 使用 GitHub Actions 构建
 
-## 使用方法
+1. 在 GitHub 创建仓库。
+2. 上传本项目所有文件，保留 `.github/workflows/build.yml` 路径。
+3. 打开仓库的 **Actions** 标签页并启用 Actions。
+4. 推送代码，或手动运行 `Build LiteDock` 工作流。
+5. 成功后，在运行记录的 Artifacts 下载 `LiteDock-Windows-x64`。
 
-- 点击 `+` 添加 `.exe`、`.lnk` 或其他可打开文件。
-- 右键应用图标可以启动、编辑或移除。
-- 将文件拖到 Dock 上可添加快捷入口。
-- 点击齿轮图标调整图标大小、透明度和时钟。
-- 右键系统托盘图标可以显示 Dock、打开设置或退出。
+## 注意事项
 
-## GitHub Actions 构建
-
-1. 在 GitHub 新建一个空仓库，例如 `LiteDock`。
-2. 上传本项目全部文件（包括 `.github/workflows/build.yml`）。
-3. 打开仓库的 **Actions** 标签页，启用 Actions。
-4. 推送代码或手动运行 `Build LiteDock` 工作流。
-5. 在工作流运行结果的 **Artifacts** 区域下载 `LiteDock-Windows-x64`，里面包含 EXE。
-
-GitHub Actions 构建流程见 `.github/workflows/build.yml`。
-
-## 已知限制 / 后续计划
-
-这是第一版原型：目前不是系统级任务栏替代品，图标悬停放大动画、窗口缩略图、自动隐藏、显示器选择、DPI/多屏细节和原生 Windows Acrylic/Mica 效果尚未实现。当前透明背景使用 Qt 半透明绘制，并非完整系统毛玻璃模糊。可在后续版本逐步补齐。
+这是轻量级第一阶段原型，不是系统级任务栏替代品。当前半透明背景不是完整 Windows Acrylic/Mica 模糊效果；图标悬停放大、窗口缩略图、自动隐藏、多屏细节仍可在后续版本实现。电池功率显示依赖电脑硬件和驱动提供 WMI 数据，部分机器只会显示电量或“功率：不可读取”。
